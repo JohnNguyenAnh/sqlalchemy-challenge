@@ -1,9 +1,15 @@
 # Import the dependencies.
 from flask import Flask, jsonify
-from sqlalchemy import create_engine, func
+from sqlalchemy import create_engine, func, desc,  distinct
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.automap import automap_base
+from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
 
+#################################################
+# Flask Setup
+#################################################
 app = Flask(__name__)
 
 #################################################
@@ -17,6 +23,10 @@ Base.prepare(engine, reflect=True)
 Measurement = Base.classes.measurement
 Station = Base.classes.station
 
+#################################################
+# Flask Routes
+#################################################
+
 @app.route("/")
 def home():
     """List all available api routes."""
@@ -28,16 +38,17 @@ def home():
         f"/api/v1.0/&lt;start&gt;<br/>"
         f"/api/v1.0/&lt;start&gt;/&lt;end&gt;<br/>"
     )
-
-# Other routes go here
-
-if __name__ == '__main__':
-    app.run(debug=True)
-
+    
 @app.route("/api/v1.0/precipitation")
 def precipitation():
     session = Session(engine)
     """Return the precipitation data for the last year"""
+    # Find the most recent date in the data set.
+    most_recent_date = session.query(Measurement.date)\
+    .order_by(desc(Measurement.date))\
+    .first()
+    # Calculate the date one year from the last date in data set.
+    one_year_ago = datetime.strptime(most_recent_date[0], '%Y-%m-%d')   - timedelta(days=366)
     # Query to retrieve the data
     results = session.query(Measurement.date, Measurement.prcp).\
         filter(Measurement.date >= one_year_ago).all()
@@ -62,56 +73,79 @@ def stations():
 def tobs():
     session = Session(engine)
     """Return the temperature observations for the last year of the most active station"""
+    # Find the most recent date in the data set.
+    most_recent_date = session.query(Measurement.date)\
+    .order_by(desc(Measurement.date))\
+    .first()
+    # Calculate the date one year from the last date in data set.
+    one_year_ago = datetime.strptime(most_recent_date[0], '%Y-%m-%d') - timedelta(days=366)
+    # Query to retrieve the data
+    results = session.query(Measurement.date, Measurement.prcp).\
+        filter(Measurement.date >= one_year_ago).all()
+    #Query all stations name and count how many time it appear
+    most_active_stations = session.query(
+        Measurement.station, 
+        func.count(Measurement.station)
+    ).group_by(
+        Measurement.station
+    ).order_by(
+        func.count(Measurement.station).desc()
+    ).first()
+    #Query only the station name and count of the most active
+    most_active_station_id = most_active_stations[0]
     # Query for the most active station and for the last year data
     results = session.query(Measurement.tobs).\
-        filter(Measurement.station == most_active_station).\
+        filter(Measurement.station == most_active_station_id).\
         filter(Measurement.date >= one_year_ago).all()
     session.close()
 
     tobs_list = list(np.ravel(results))
     return jsonify(tobs_list)
 
+
 @app.route("/api/v1.0/<start>")
 def start(start):
     session = Session(engine)
-    """Return TMIN, TAVG, TMAX for all dates greater than or equal to the start date"""
+    try:
+        start_date = datetime.strptime(start, '%Y-%m-%d')
+    except ValueError:
+        session.close()
+        return jsonify({"error": "Date format should be YYYY-MM-DD"}), 400
+    """Return TMIN, TAVG, TMAX for dates start from url"""
     results = session.query(func.min(Measurement.tobs), func.avg(Measurement.tobs), func.max(Measurement.tobs)).\
-        filter(Measurement.date >= start).all()
+        filter(Measurement.date >= start_date).all()
     session.close()
 
-    # Create a dictionary
     temp_stats = list(np.ravel(results))
     return jsonify(temp_stats)
+
 
 @app.route("/api/v1.0/<start>/<end>")
 def start_end(start, end):
     session = Session(engine)
+    try:
+        start_date = datetime.strptime(start, '%Y-%m-%d')
+        end_date = datetime.strptime(end, '%Y-%m-%d')
+    except ValueError:
+        session.close()
+        return jsonify({"error": "Date format should be YYYY-MM-DD"}), 400
     """Return TMIN, TAVG, TMAX for dates between the start and end date inclusive"""
     results = session.query(func.min(Measurement.tobs), func.avg(Measurement.tobs), func.max(Measurement.tobs)).\
-        filter(Measurement.date >= start).\
-        filter(Measurement.date <= end).all()
+        filter(Measurement.date >= start_date).\
+        filter(Measurement.date <= end_date).all()
     session.close()
 
     temp_stats = list(np.ravel(results))
     return jsonify(temp_stats)
-# reflect an existing database into a new model
 
-# reflect the tables
-
-
-# Save references to each table
-
-
-# Create our session (link) from Python to the DB
-
-
-#################################################
-# Flask Setup
-#################################################
+if __name__ == '__main__':
+    app.run(debug=True)
 
 
 
 
-#################################################
-# Flask Routes
-#################################################
+
+
+
+
+
